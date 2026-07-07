@@ -2,6 +2,13 @@
 
 # Release Notes ZETA Guard Helm Charts
 
+## Release 1.2.2
+
+### changed:
+
+- VAU related bugfixes
+- fixed: Now enforcing client and dpop key binding in smc-b token
+
 ## Release 1.2.1
 
 ### changed:
