@@ -2,6 +2,44 @@
 
 > The Makefile commands are for ease of use and are optional.
 
+## Getting started
+
+**Validate without credentials or a cluster** (works right after cloning):
+
+```shell
+make help           # list targets, usage, and effective variables
+make lint           # Helm strict lint against demo values
+make template-demo  # render zeta-guard with demo values + yamllint
+make deps           # vendor chart dependencies
+```
+
+`make template` (non-demo), `deploy`, `dry-run` and `render` additionally
+require the
+SMCB keystore (`SMB_KEYSTORE_PW_FILE` / `SMB_KEYSTORE_FILE_B64`) — use
+`make template-demo`
+for a credential-free render.
+
+**Values defaults:** `stage=local` uses the bundled
+[local-test/values.local.yaml](../../local-test/values.local.yaml) and
+[local-test/local.tfvars](../../local-test/local.tfvars) out of the box (their
+base directory
+is `VALUES_DIR`, default `local-test/`).
+
+**Deploy to a local KIND cluster** (requires the SMCB keystore plus
+`DOCKER_USER` /
+`DOCKER_PASSWORD` — see the prerequisites in the [README](../../README.md) and
+[How to deploy ZETA Guard](../how-to_guides/How_to_deploy_ZETA_Guard.md)):
+
+```shell
+make kind-up            # create the cluster, patch CoreDNS, create secrets, install operators
+make deploy stage=local # install/upgrade the release
+make status stage=local # check the release
+```
+
+See [Environment variables](#environment-variables) below for the full list of
+settings, or run
+`make help`.
+
 ## Makefile Targets
 
 - `make help` – lists all targets, usage, and effective variables
@@ -14,14 +52,25 @@
   - Namespace defaults to `zeta-<STAGE>` and can be overridden via `namespace=<ns>`.
   - `DB_MODE=cloudnative` installs the CloudNativePG operator for local environments if desired.
 - `make deploy-debug stage=STAGE [namespace=NAMESPACE] [DB_MODE=cloudnative]` – same as deploy with `--debug`
- - `make install-cnpg-operator [namespace=cnpg-system]` – install CloudNativePG operator (clusterWide=true) into the specified namespace (create it first if needed)
- - `make uninstall-cnpg-operator [namespace=cnpg-system]` – uninstall the CNPG operator release (keeps CRDs)
- - `make reset-cnpg-operator [namespace=cnpg-system]` – uninstall the operator and delete CNPG CRDs (destructive)
+- `make install-cnpg-operator` – install CloudNativePG operator (
+  clusterWide=true) into the fixed `cnpg-system` namespace (created
+  automatically)
+- `make uninstall-cnpg-operator` – uninstall the CNPG operator release from
+  `cnpg-system` (keeps CRDs)
+- `make reset-cnpg-operator` – uninstall the operator from `cnpg-system` and
+  delete CNPG CRDs (destructive)
 - `make generate-main-and-backend` – generates `main.tf`, `providers.tf`, and
   backend config from templates based on `TF_VAR_use_kubernetes`; the Kubernetes
   provider is only included when `TF_VAR_use_kubernetes=true`
 - `make config-init stage=STAGE [namespace=NAMESPACE]` – runs `generate-main-and-backend` and initializes the Terraform backend
-- `make config-plan stage=STAGE [namespace=NAMESPACE]` – view incoming changes to the authserver by make config
+- `make config-plan stage=STAGE [namespace=NAMESPACE] [PLAN_OUT=<file>]` – view
+  incoming changes to the authserver by make config
+  - `PLAN_OUT=<file>` additionally saves the Terraform plan to a file so it
+    can be reviewed later with `config-show-plan`. Empty (default) writes no
+    file.
+- `make config-show-plan stage=STAGE PLAN_OUT=<file>` – render a plan file saved
+  by `config-plan` as a plain-text (no-color) diff to stdout, e.g.
+  `make config-show-plan stage=dev PLAN_OUT=authserver.change.plan > authserver.change.txt`
 - `make config stage=STAGE [namespace=NAMESPACE]` – configure the authserver
 - `make status stage=STAGE [namespace=NAMESPACE]` – show release status
 - `make versions stage=STAGE [namespace=NAMESPACE]` – Show deployed component images and versions
@@ -31,18 +80,69 @@
 - `make kind-up [HOST_IP=<ip>] [KIND_INGRESS_HOSTS="<host1> <host2>"]` – create local kind cluster and patch CoreDNS so in-cluster clients resolve ingress hostnames to your host IP (hosts are auto-detected from local values by default)
 - `make kind-down` – delete the local kind cluster
 
+## Environment variables
+
+All of these can be set as an environment variable or as a `make` argument (
+`VAR=value`).
+
+### Stage & values selection
+
+| Variable     | Purpose                                                                    | Default            |
+|--------------|----------------------------------------------------------------------------|--------------------|
+| `stage`      | Deployment stage; also sets the namespace (`zeta-<stage>`) and values file | `local`            |
+| `namespace`  | Target namespace                                                           | `zeta-<stage>`     |
+| `values`     | Path to the Helm values file (overrides the stage default)                 | derived from stage |
+| `VALUES_DIR` | Base directory for values files and tfvars                                 | `local-test/`      |
+| `DB_MODE`    | Database bootstrap mode for local convenience targets                      | `cloudnative`      |
+
+### SMCB keystore (required for `deploy`, `deploy-debug`, `template`,
+
+`template--debug`, `render`, `dry-run`)
+
+| Variable                     | Purpose                                           | Required |
+|------------------------------|---------------------------------------------------|----------|
+| `SMB_KEYSTORE_PW_FILE`       | Path to a file holding the SMCB keystore password | yes      |
+| `SMB_KEYSTORE_FILE_B64`      | Path to the base64-encoded PKCS#12 SMCB keystore  | yes      |
+| `OCSP_SMB_KEYSTORE_PW_FILE`  | Password file for the OCSP mock signing keystore  | optional |
+| `OCSP_SMB_KEYSTORE_FILE_B64` | Base64 PKCS#12 for the OCSP mock signing keystore | optional |
+
+### Terraform / authserver configuration
+
+| Variable                   | Purpose                                                                                                                                                                                                    | Default          |
+|----------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|------------------|
+| `TF_VAR_keycloak_password` | Keycloak admin password for `config` / `config-plan` / `config-import`. May be empty in Kubernetes-backend mode (read from the cluster secret).                                                            | *(empty)*        |
+| `TF_VAR_use_kubernetes`    | Terraform operating mode. `false` = local backend without Kubernetes (also omits the `hashicorp/kubernetes` provider). See [How to configure authserver](../how-to_guides/How_to_configure_authserver.md). | `true`           |
+| `TF_VAR_config_path`       | Path to the kubeconfig used by the Kubernetes backend                                                                                                                                                      | `~/.kube/config` |
+| `PLAN_OUT`                 | Plan file written by `config-plan` and rendered by `config-show-plan`                                                                                                                                      | *(none)*         |
+
+### Container registry (for `kind-up`, `create-secrets`, `k3s`)
+
+| Variable          | Purpose                                 | Required |
+|-------------------|-----------------------------------------|----------|
+| `DOCKER_REGISTRY` | Registry host for the image pull secret | yes      |
+| `DOCKER_USER`     | Registry username                       | yes      |
+| `DOCKER_PASSWORD` | Registry password / token               | yes      |
+
+### Local KIND cluster
+
+| Variable             | Purpose                                                                                                           | Default           |
+|----------------------|-------------------------------------------------------------------------------------------------------------------|-------------------|
+| `HOST_IP`            | LAN IP used to patch CoreDNS / NetworkPolicy                                                                      | auto-detected     |
+| `KIND_CONFIG`        | KIND cluster config file                                                                                          | `kind-local.yaml` |
+| `KIND_INGRESS_HOSTS` | Ingress hostnames for the CoreDNS patch; auto-derived from the local values file, falls back to `zeta-kind.local` | auto-derived      |
+
+### ASL identity secret (for `generate-asl-identity-secret`)
+
+| Variable               | Purpose                                  | Required |
+|------------------------|------------------------------------------|----------|
+| `ASL_SIGNER_CERT_FILE` | Path to the ASL signer certificate (PEM) | yes      |
+| `ASL_SIGNER_KEY_FILE`  | Path to the ASL signer private key (PEM) | yes      |
+| `ASL_ISSUER_CERT_FILE` | Path to the ASL issuer certificate (PEM) | yes      |
+
 ## Notes
 
-- The Makefile expects `SMB_KEYSTORE_PW_FILE` and `SMB_KEYSTORE_FILE_B64` to be set for most targets.
-- `VALUES_DIR` is selected automatically: `private/` when present, otherwise `local-test/`.
-- For `make config` and `make config-plan`, set `TF_VAR_keycloak_password` to the Keycloak admin password (used by Terraform).
-- `TF_VAR_use_kubernetes` controls the Terraform operating mode (default:
-  `true`). Set to `false` for local mode without Kubernetes backend — this also
-  omits the `hashicorp/kubernetes` provider from the generated `providers.tf`,
-  so no Kubernetes installation is required.
-  See [How to configure authserver](../how-to_guides/How_to_configure_authserver.md)
-  for details.
-- `KIND_INGRESS_HOSTS` is auto-derived from ingress-related host keys in `values.local.yaml` (`ingressRulesHost`, `hostname`, `zetaBaseUrl`, `wellKnownBase`, `requiredAudience`, `pepIssuer`). If auto-detection yields nothing, it falls back to `zeta-kind.local`.
+- `VALUES_DIR` defaults to `local-test/`; override it with `VALUES_DIR=<dir>` (
+  e.g. to point at your own values directory).
 - CloudNativePG: install a single operator per cluster. If you previously installed the operator in another namespace and hit Helm ownership errors, remove the old release and CNPG CRDs before installing into the desired namespace.
 
 ## Examples
@@ -53,3 +153,8 @@
 - `make config stage=demo` (uses configured terraform variables, K8s mode)
 - `make config stage=local TF_VAR_use_kubernetes=false` (local mode, no K8s backend)
 - `make kind-up KIND_INGRESS_HOSTS="zeta-kind.local zeta-client.local"`
+- CI plan review (save, then render to a text diff):
+  ```shell
+  make config-plan stage=dev PLAN_OUT=authserver.change.plan
+  make config-show-plan stage=dev PLAN_OUT=authserver.change.plan > authserver.change.txt
+  ```

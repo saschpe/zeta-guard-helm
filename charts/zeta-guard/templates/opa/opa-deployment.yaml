@@ -61,10 +61,7 @@ spec:
               value: "true"
             - name: PROVISIONING_CONTAINER_NAME
               value: {{ .Values.provisioningProcessor.provisioningContainer | quote }}
-            {{- if .Values.provisioningProcessor.provisioningContainerCaSecretRef }}
-            - name: PROVISIONING_CONTAINER_REGISTRY_CA_FILE
-              value: "/var/registry-ca/ca.crt"
-            {{- end }}
+            {{- include "zeta-guard.provisioningProcessor.caEnv" . | nindent 12 }}
             - name: TRUST_CERTCHAIN_FILE
               value: "/var/image-trustchain/certchain.pem"
             {{- include "zeta-guard.proxyEnvVars" .Values.global | nindent 12 }}
@@ -82,11 +79,7 @@ spec:
             - name: image-trustchain
               mountPath: "/var/image-trustchain"
               readOnly: true
-            {{- if .Values.provisioningProcessor.provisioningContainerCaSecretRef }}
-            - name: registry-ca
-              mountPath: /var/registry-ca
-              readOnly: true
-            {{- end }}
+            {{- include "zeta-guard.provisioningProcessor.caVolumeMounts" . | nindent 12 }}
       containers:
         - name: opa
           {{- with .Values.opa.containerSecurityContext }}
@@ -185,14 +178,7 @@ spec:
         - name: image-trustchain
           secret:
             secretName: {{ required "SecretRef for image verification certchain is missing, see imageTrustCertchainSecretRef" .Values.imageTrustCertchainSecretRef }}
-        {{- with .Values.provisioningProcessor.provisioningContainerCaSecretRef }}
-        - name: registry-ca
-          secret:
-            secretName: {{ .name }}
-            items:
-              - key: {{ .key }}
-                path: ca.crt
-        {{- end }}
+        {{- include "zeta-guard.provisioningProcessor.caVolumes" . | nindent 8 }}
         {{- if and .Values.opa.bundle.enabled (and $wif $wif.enabled) }}
         - name: gcp-token-volume
           secret:
