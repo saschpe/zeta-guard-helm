@@ -203,3 +203,77 @@ app.kubernetes.io/name: pep-proxy
   value: {{ . | quote }}
 {{- end }}
 {{- end -}}
+
+{{/*
+Provisioning processor registry-CA wiring, shared by all init containers that run
+the provisioning processor (authserver, pep, opa, opa-simulation).
+Pass the root context (.) as the argument.
+
+caEnv: PROVISIONING_CONTAINER_REGISTRY_CA_FILE env var (when a Secret or ConfigMap
+ref is set), the registry credentials (when registryCredentialsSecretRef is set)
+plus any provisioningProcessor.extraEnv.
+  Usage: {{- include "zeta-guard.provisioningProcessor.caEnv" . | nindent N }}
+*/}}
+{{- define "zeta-guard.provisioningProcessor.caEnv" -}}
+{{- if or .Values.provisioningProcessor.provisioningContainerCaSecretRef .Values.provisioningProcessor.provisioningContainerCaConfigMapRef }}
+- name: PROVISIONING_CONTAINER_REGISTRY_CA_FILE
+  value: "/var/registry-ca/ca.crt"
+{{- end }}
+{{- with .Values.provisioningProcessor.registryCredentialsSecretRef }}
+- name: PROVISIONING_CONTAINER_REGISTRY_USERNAME
+  valueFrom:
+    secretKeyRef:
+      name: {{ .name }}
+      key: {{ .usernameKey | default "username" }}
+- name: PROVISIONING_CONTAINER_REGISTRY_TOKEN
+  valueFrom:
+    secretKeyRef:
+      name: {{ .name }}
+      key: {{ .tokenKey | default "token" }}
+{{- end }}
+{{- with .Values.provisioningProcessor.extraEnv }}
+{{- toYaml . }}
+{{- end }}
+{{- end -}}
+
+{{/*
+caVolumeMounts: registry-ca mount (when a Secret or ConfigMap ref is set) plus any
+provisioningProcessor.extraVolumeMounts.
+  Usage: {{- include "zeta-guard.provisioningProcessor.caVolumeMounts" . | nindent N }}
+*/}}
+{{- define "zeta-guard.provisioningProcessor.caVolumeMounts" -}}
+{{- if or .Values.provisioningProcessor.provisioningContainerCaSecretRef .Values.provisioningProcessor.provisioningContainerCaConfigMapRef }}
+- name: registry-ca
+  mountPath: /var/registry-ca
+  readOnly: true
+{{- end }}
+{{- with .Values.provisioningProcessor.extraVolumeMounts }}
+{{- toYaml . }}
+{{- end }}
+{{- end -}}
+
+{{/*
+caVolumes: registry-ca volume from a Secret or ConfigMap (mutually exclusive,
+Secret takes precedence) plus any provisioningProcessor.extraVolumes.
+  Usage: {{- include "zeta-guard.provisioningProcessor.caVolumes" . | nindent N }}
+*/}}
+{{- define "zeta-guard.provisioningProcessor.caVolumes" -}}
+{{- if .Values.provisioningProcessor.provisioningContainerCaSecretRef }}
+- name: registry-ca
+  secret:
+    secretName: {{ .Values.provisioningProcessor.provisioningContainerCaSecretRef.name }}
+    items:
+      - key: {{ .Values.provisioningProcessor.provisioningContainerCaSecretRef.key }}
+        path: ca.crt
+{{- else if .Values.provisioningProcessor.provisioningContainerCaConfigMapRef }}
+- name: registry-ca
+  configMap:
+    name: {{ .Values.provisioningProcessor.provisioningContainerCaConfigMapRef.name }}
+    items:
+      - key: {{ .Values.provisioningProcessor.provisioningContainerCaConfigMapRef.key }}
+        path: ca.crt
+{{- end }}
+{{- with .Values.provisioningProcessor.extraVolumes }}
+{{- toYaml . }}
+{{- end }}
+{{- end -}}

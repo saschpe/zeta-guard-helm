@@ -167,6 +167,10 @@ global:
   noProxy: ".cluster.local,europe-west3-docker.pkg.dev"
 ```
 
+> For mirroring the provisioning data image into your own registry and
+> configuring a registry CA for the init container, see
+> [How to use a custom OCI registry](How_to_use_a_custom_OCI_registry.md).
+
 ---
 
 ## Example: minimal production overlay

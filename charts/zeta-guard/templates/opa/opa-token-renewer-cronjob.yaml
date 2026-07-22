@@ -27,10 +27,6 @@ spec:
           imagePullSecrets:
             {{- toYaml . | nindent 12 }}
           {{- end }}
-          {{- with .Values.opa.workloadIdentityFederation.worker.resources }}
-          resources:
-            {{- toYaml . | nindent 12 }}
-          {{- end }}
           securityContext:
             seccompProfile:
               type: RuntimeDefault
@@ -40,6 +36,10 @@ spec:
             - name: token-renewer
               image: "{{ .Values.opa.workloadIdentityFederation.worker.image }}"
               imagePullPolicy: "{{ .Values.opa.workloadIdentityFederation.worker.imagePullPolicy }}"
+              {{- with .Values.opa.workloadIdentityFederation.worker.resources }}
+              resources:
+                {{- toYaml . | nindent 16 }}
+              {{- end }}
               {{- with .Values.opa.cronjobSecurityContext }}
               securityContext:
                 {{- toYaml . | nindent 16 }}
@@ -122,7 +122,7 @@ spec:
                   ENCODED_TOKEN=$(base64 -w0 /tmp/gar_basic.txt 2>/dev/null || base64 /tmp/gar_basic.txt | tr -d '\n')
 
                   kubectl patch secret opa-gcp-token --type=merge -p "{\"data\":{\"token\":\"${ENCODED_TOKEN}\"}}"
-                  kubectl annotate --overwrite secret gematik-oidc-token last-updated="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+                  kubectl annotate --overwrite secret opa-gcp-token last-updated="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 
                   echo "Kubernetes Secret 'opa-gcp-token' aktualisiert (Basic-Präfix gesetzt)."
               volumeMounts:

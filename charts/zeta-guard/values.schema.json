@@ -1152,6 +1152,87 @@
             }
           ]
         },
+        "provisioningContainerCaConfigMapRef": {
+          "type": "object",
+          "description": "Reference to a Kubernetes ConfigMap containing the PEM-encoded CA certificate for the provisioning container registry. Mutually exclusive with provisioningContainerCaSecretRef (SecretRef takes precedence if both are set). Useful for the ConfigMap that OpenShift's custom PKI mechanism generates (the public CA parts are not secret). The certificate is mounted as /var/registry-ca/ca.crt in each init container and sets PROVISIONING_CONTAINER_REGISTRY_CA_FILE accordingly.",
+          "required": [
+            "name",
+            "key"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "name": {
+              "type": "string",
+              "description": "Name of the Kubernetes ConfigMap.",
+              "examples": [
+                "zeta-guard-openshift-ca-bundle"
+              ]
+            },
+            "key": {
+              "type": "string",
+              "description": "Key within the ConfigMap that holds the PEM certificate data.",
+              "examples": [
+                "ca-bundle.crt"
+              ]
+            }
+          },
+          "examples": [
+            {
+              "name": "zeta-guard-openshift-ca-bundle",
+              "key": "ca-bundle.crt"
+            }
+          ]
+        },
+        "registryCredentialsSecretRef": {
+          "type": "object",
+          "description": "Reference to a Kubernetes Secret holding the username and token/password for the provisioning container registry. Required for registries that do not allow anonymous access. The credentials are wired into each init container via PROVISIONING_CONTAINER_REGISTRY_USERNAME and PROVISIONING_CONTAINER_REGISTRY_TOKEN, which are used for a cosign login before the provisioning container is fetched.",
+          "required": [
+            "name"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "name": {
+              "type": "string",
+              "description": "Name of the Kubernetes Secret.",
+              "examples": [
+                "registry-credentials"
+              ]
+            },
+            "usernameKey": {
+              "type": "string",
+              "description": "Key within the Secret that holds the registry username. Defaults to 'username'.",
+              "examples": [
+                "username"
+              ]
+            },
+            "tokenKey": {
+              "type": "string",
+              "description": "Key within the Secret that holds the registry token/password. Defaults to 'token'.",
+              "examples": [
+                "token"
+              ]
+            }
+          },
+          "examples": [
+            {
+              "name": "registry-credentials",
+              "usernameKey": "username",
+              "tokenKey": "token"
+            }
+          ]
+        },
+        "extraEnv": {
+          "type": "array",
+          "description": "Additional environment variables for the provisioning processor init container. Use together with extraVolumes/extraVolumeMounts to wire up a registry CA from an arbitrary source (e.g. set PROVISIONING_CONTAINER_REGISTRY_CA_FILE to a custom mount path)."
+        },
+        "extraVolumes": {
+          "type": "array",
+          "description": "Additional volumes for the pods that run the provisioning processor init container (Secret, ConfigMap, projected, CSI, ...). Gives operators full freedom over how the registry CA (or other material) is provided."
+        },
+        "extraVolumeMounts": {
+          "type": "array",
+          "description": "Additional volume mounts for the provisioning processor init container, matching entries in extraVolumes."
+        },
         "resources": {
           "$ref": "#/$defs/K8sResourceRequirements",
           "description": "CPU and memory resource requests/limits for the provisioning processor."

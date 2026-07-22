@@ -18,7 +18,9 @@ authserver without the need to deploy it from scratch.
 > - Kubernetes namespace
 > - TLS configuration (self-signed certificates are supported)
 > - Additional PDP scopes
-> - Audience scope name (default: `zero:audience`)
+> - Audience scope name (default: `zero:audience`) — the scope that carries the
+    > access-token claims the PEP requires (see the note under "Terraform
+    Variables")
 >
 > Predefined settings:
 > - PDP scopes `zero:manage` and `zero:register` are automatically created
@@ -107,6 +109,25 @@ The following validations are enforced:
   colons, periods, or hyphens
 - When `use_kubernetes = false`, both `keycloak_username` and
   `keycloak_password` must be set
+
+> **Important — the audience scope carries the access-token claims the PEP
+requires.**
+> The scope named by `audience_scope_name` (default `zero:audience`) carries the
+> protocol
+> mappers that inject the claims the PEP validates on every request: `aud`,
+`profession_oid`,
+> `client_id`, `ip_address`, `product_id`, `product_version`, `common_name`,
+> `organization_name`. **The client must request this scope.** If a Fachdienst
+> mandates a
+> specific scope name — e.g. VSDM requires `scope=vsdservice` (A_26744) — set
+> `audience_scope_name` to that value so the claims ride on it, and do not also
+> list it in
+> `pdp_scopes` (a duplicate scope name fails the apply). Otherwise, the issued
+> token lacks those
+> claims and the PEP rejects the request (e.g. `missing field 'aud'`) before any
+> policy is
+> evaluated. Note that setting `audience_scope_name` replaces the default
+`zero:audience` scope.
 
 ---
 
@@ -425,7 +446,9 @@ zeta-guard:
 
 > The `provisioningProcessor` is a shared init container used by authserver,
 > OPA, OPA-simulation, and PEP-Proxy. It is configured at the top level of the
-> zeta-guard chart, not under `authserver`.
+> zeta-guard chart, not under `authserver`. For the image source, mirroring the
+> signed provisioning data image, and the registry CA configuration, see
+> [How to use a custom OCI registry](How_to_use_a_custom_OCI_registry.md).
 
 ### Replicas and PodDisruptionBudget
 

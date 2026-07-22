@@ -67,11 +67,11 @@ an [OAuth Protected Resource Metadata](https://www.rfc-editor.org/rfc/rfc9728)
 document at `/.well-known/oauth-protected-resource`. Two values must be set
 correctly for each deployment:
 
-| Value                                | Description                                                                         | Default |
-|--------------------------------------|-------------------------------------------------------------------------------------|---------|
-| `pepproxy.wellKnownBase`             | Public base URL of the PEP (e.g. `https://zeta.example.com`)                        | `""`    |
-| `pepproxy.wellKnownResourceSuffix`   | Path suffix appended to `wellKnownBase` for the `resource` field                    | `/pep/` |
-| `authserver.wellKnownAuthServerPath` | Path suffix appended to `authserver.hostname` for the `authorization_servers` field | `/`     |
+| Value                                | Description                                                                         | Default            |
+|--------------------------------------|-------------------------------------------------------------------------------------|--------------------|
+| `pepproxy.wellKnownBase`             | Externally reachable base URL of the PEP (e.g. `https://zeta.example.com`)          | `http://localhost` |
+| `pepproxy.wellKnownResourceSuffix`   | Path suffix appended to `wellKnownBase` for the `resource` field                    | `/pep/`            |
+| `authserver.wellKnownAuthServerPath` | Path suffix appended to `authserver.hostname` for the `authorization_servers` field | `/`                |
 
 Minimal values snippet:
 
@@ -96,6 +96,45 @@ This produces:
   "zeta_asl_use": "required"
 }
 ```
+
+### When and why to deviate from the defaults
+
+The client discovers the well-known documents using only the hostname of the
+URLs above; it discards the path. The `resource` value, however, is reused by
+the
+PEP as the token audience (`aud`) and validated on every request. Therefore
+`wellKnownBase` must always be the URL that clients reach from the outside.
+
+- **`http://localhost` default:** only valid for local/KIND setups. In every
+  reachable environment `pepproxy.wellKnownBase` **must** be overridden,
+  otherwise
+  `resource` points to an unreachable URL and token validation fails with
+  `401/403`.
+- **Keycloak under a sub-path (`/auth`):** set
+  `authserver.wellKnownAuthServerPath: /auth`. This also applies when
+  `authserver.adminHostname` is set, because Keycloak then starts with
+  `--hostname=https://<host>/auth` and its `issuer` lives under `/auth`.
+- **Resource rooted at the base URL:** set
+  `pepproxy.wellKnownResourceSuffix: /`.
+- **Ingress/reverse proxy rewriting paths or external host ≠ internal DNS:** set
+  `wellKnownBase`/`hostname` to the client-facing values.
+
+### Avoiding duplicate well-knowns
+
+The two URLs are built by plain string concatenation without normalization
+(`resource = wellKnownBase + wellKnownResourceSuffix`). A scheme inside
+`hostname` (`https://https://…`), a double slash (`…//pep/`), or a duplicated
+path segment (`/pep/pep/`) is emitted verbatim.
+
+A more subtle failure is two conflicting authorization-server documents: the
+PEP proxies `/.well-known/oauth-authorization-server` to Keycloak, while
+Keycloak's own metadata is simultaneously reachable under
+`/auth/realms/zeta-guard/.well-known/openid-configuration` once `/auth` is
+routed
+to Keycloak. If `wellKnownAuthServerPath` is inconsistent with Keycloak's
+`issuer` (`--hostname`), both documents describe the same server with a
+different
+`issuer`/endpoints, making discovery ambiguous.
 
 ## Scaling pods via replicaCount
 

@@ -1,9 +1,16 @@
-# Prefer private/ if it exists; otherwise fallback to local-test/
+# Show the help target when `make` is run without arguments.
+.DEFAULT_GOAL := help
+
+# VALUES_DIR: honor an explicit override (env or CLI); else private/ if it exists;
+# otherwise fall back to local-test/. Uses ifndef (not ?=) because the default is computed.
+ifndef VALUES_DIR
 ifeq ($(wildcard private/),)
   VALUES_DIR := local-test/
 else
   VALUES_DIR := private/
 endif
+endif
+override VALUES_DIR := $(VALUES_DIR:/=)/
 
 # Optional single-parameter env selection: `make deploy stage=<env>`
 # If not provided, default to 'local'.
@@ -33,6 +40,10 @@ DB_MODE ?= cloudnative
 TF_PATH := terraform/authserver
 TF_VAR_config_path ?= "~/.kube/config"
 TF_VAR_use_kubernetes ?= true
+# Plan file name shared by `config-plan` (writes it) and `config-show-plan` (renders it).
+# When set, `make config-plan PLAN_OUT=<file>` saves the plan so it can be reviewed later
+# via `make config-show-plan PLAN_OUT=<file>`. Empty (default) = no plan file is written.
+PLAN_OUT ?=
 
 # Enforce SMB keystore vars only for targets that actually pass them to Helm
 ifneq ($(filter deploy deploy-debug template template--debug render dry-run,$(MAKECMDGOALS)),)
@@ -89,35 +100,37 @@ endif
 
 .PHONY: \
   help deps lint template-demo yamllint \
-  install-cert-manager install-metrics-server install-cnpg-operator reset-cnpg-operator \
-  template render dry-run \
+  install-cert-manager install-metrics-server install-cnpg-operator uninstall-cnpg-operator reset-cnpg-operator \
+  template template--debug render dry-run \
   deploy deploy-debug \
-  config config-plan config-import \
+  generate-main-and-backend config-init config config-plan config-show-plan config-import \
   status versions versions-debug uninstall clean \
   dry-run-security-restricted security-restricted security-disable show-label \
   generate-asl-identity-secret \
   renew-opa-token \
-  kind-up kind-down \
+  kind-up kind-down myip create-secrets \
+  proxy-up proxy-down proxy-verify \
   trivy
 
 FORCE:
 
 help: ## Show available targets, usage, and effective vars
-	@awk 'BEGIN {FS=":.*## "}; /^[a-zA-Z0-9_.-]+:.*## /{printf "  %-25s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
-ifneq ($(wildcard private/),)
-	@echo
-	@echo "Targets requiring private/:"
-	@awk 'BEGIN {FS=":.*##! "}; /^[a-zA-Z0-9_.-]+:.*##! /{printf "  %-25s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
-endif
-	@echo
 	@echo "Usage: make <target> [stage=<env>] [namespace=<ns>] [values=<path>]"
 	@echo "       stage defaults to 'local' when omitted"
 	@echo
-	@echo "Vars (effective):\n RELEASE=$(RELEASE)\n NAMESPACE=$(NAMESPACE)\n VALUES=$(VALUES)\n STAGE=$(STAGE)"
+	@awk 'BEGIN {FS=":.*## "}; /^[a-zA-Z0-9_.-]+:.*## /{printf "  %-28s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+ifneq ($(wildcard private/),)
 	@echo
-	@echo "Note:"
-	@echo "  The following targets require SMB_KEYSTORE_PW_FILE and SMB_KEYSTORE_FILE_B64:"
-	@echo "    deploy, deploy-debug, template, template--debug, render, dry-run"
+	@echo "Targets requiring private/:"
+	@awk 'BEGIN {FS=":.*##! "}; /^[a-zA-Z0-9_.-]+:.*##! /{printf "  %-28s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+endif
+	@echo
+	@echo "Key variables (env var or make arg; full list: docs/reference/Makefile_reference.md):"
+	@printf "  %-28s %s\n" "SMB_KEYSTORE_PW_FILE" "SMCB keystore password file (required for deploy/template/render/dry-run)"
+	@printf "  %-28s %s\n" "SMB_KEYSTORE_FILE_B64" "SMCB keystore base64 file (required for deploy/template/render/dry-run)"
+	@printf "  %-28s %s\n" "TF_VAR_keycloak_password" "Keycloak admin password (config / config-plan)"
+	@echo
+	@printf "Vars (effective):\n RELEASE=%s\n NAMESPACE=%s\n VALUES=%s\n VALUES_DIR=%s\n STAGE=%s\n" "$(RELEASE)" "$(NAMESPACE)" "$(VALUES)" "$(VALUES_DIR)" "$(STAGE)"
 
 
 $(LOCK): Chart.yaml $(SUBCHARTS) ## Refresh vendored deps + lock when chart specs change
@@ -200,7 +213,7 @@ template: $(LOCK) ## Render manifests to stdout
 		--set-string "zeta-guard.authserver.genesisHash=__template__" \
 		--set-string "zeta-guard.authserver.smcbHashingPepper=__template__"
 
-template--debug: $(LOCK) ## Render manifests to stdout
+template--debug: $(LOCK) ## Render manifests to stdout with Helm debug output
 	helm template $(RELEASE) . -f $(VALUES) $(HELM_EXTRA_VALUES_PARAMS) $(HELM_ARGS) --namespace $(NAMESPACE) \
 		--set-string "zeta-guard.authserver.admin.password=__template__" \
 		--set-string "zeta-guard.authserver.genesisHash=__template__" \
@@ -220,12 +233,15 @@ yamllint: rendered.yaml ## Lint rendered.yaml with yamllint
 
 
 ### DRY-RUN ###
-dry-run: ## Server-side dry-run apply of rendered manifests
+# TEMPORARY (1.2.x only): client-side dry-run. Server-side merges against live
+# Helm-managed objects and yields false positives (probe handler-type change,
+# CNPG storage/clusterIP drift). Revert to --dry-run=server once resolved.
+dry-run: ## Client-side dry-run apply of rendered manifests
 	helm template $(RELEASE) . -f $(VALUES) $(HELM_EXTRA_VALUES_PARAMS) $(HELM_ARGS) --namespace $(NAMESPACE) \
 		--set-string "zeta-guard.authserver.admin.password=__dryrun__" \
 		--set-string "zeta-guard.authserver.genesisHash=__dryrun__" \
 		--set-string "zeta-guard.authserver.smcbHashingPepper=__dryrun__" \
-		| kubectl apply --dry-run=server -n $(NAMESPACE) -f -
+		| kubectl apply --dry-run=client -n $(NAMESPACE) -f -
 
 
 ### DEPLOYMENT ###
@@ -265,13 +281,20 @@ config: ## Configure deployed authserver through terraform
 		-var="keycloak_password=$(TF_VAR_keycloak_password)" \
 		-auto-approve
 
-config-plan: ## List changes that would be made to the stage (by make config)
+config-plan: ## List changes that would be made to the stage (by make config); set PLAN_OUT=<file> to save the plan
 	$(MAKE) config-init
-	# plan (list changes against current tf-state; skip external scripts)
+	# plan (list changes against current tf-state; skip external scripts).
+	# With PLAN_OUT=<file> the plan is also saved to a file, which `make config-show-plan PLAN_OUT=<file>` can render
+	# as a plain-text diff for review.
 	terraform -chdir=$(TF_PATH) plan \
     	-var-file=../../$(VALUES_DIR)$(STAGE).tfvars \
     	-var="keycloak_password=$(TF_VAR_keycloak_password)" \
-    	-var="skip_external_resources=true"
+    	-var="skip_external_resources=true" \
+    	$(if $(strip $(PLAN_OUT)),-out=$(PLAN_OUT))
+
+config-show-plan: ## Render a plan file saved by config-plan as a plain-text diff to stdout; needs PLAN_OUT=<file>
+	@test -n "$(strip $(PLAN_OUT))" || { echo "PLAN_OUT is required: first 'make config-plan PLAN_OUT=<file>', then 'make config-show-plan PLAN_OUT=<file>'"; exit 1; }
+	terraform -chdir=$(TF_PATH) show -no-color $(PLAN_OUT)
 
 config-import: ## For development and troubleshooting only - imports configuration not yet managed by terraform
 	$(MAKE) config-init
@@ -360,8 +383,8 @@ KIND_INGRESS_HOSTS_AUTO := $(strip $(shell \
 KIND_INGRESS_HOSTS ?= $(if $(KIND_INGRESS_HOSTS_AUTO),$(KIND_INGRESS_HOSTS_AUTO),zeta-kind.local)
 KIND_INGRESS_HOSTS_ESCAPED := $(shell printf '%s' "$(KIND_INGRESS_HOSTS)" | sed 's/[\/&]/\\&/g')
 
-myip:
-	echo $(HOST_IP)
+myip: ## Print the auto-detected HOST_IP (LAN IP used for CoreDNS / NetworkPolicy)
+	@echo $(HOST_IP)
 
 kind-up: ##! Create KIND cluster, patch CoreDNS, create ns and required secrets (requires private/)
 	@[ -n "$(HOST_IP)" ] || (echo "HOST_IP not detected. Export HOST_IP=192.168.x.y and retry." && exit 1)
@@ -403,7 +426,7 @@ proxy-up: ##! Deploy Squid forward proxy in KIND/OpenShift cluster for local pro
 	@if kubectl api-resources 2>/dev/null | grep -q securitycontextconstraints; then \
 	  echo "OpenShift detected — granting anyuid SCC to squid-proxy ..."; \
 	  if command -v oc >/dev/null 2>&1; then \
-  		eval $(crc oc-env) \
+	    eval "$$(crc oc-env)"; \
 	    oc adm policy add-scc-to-user anyuid -z squid-proxy -n $(NAMESPACE); \
 	  else \
 	    kubectl create rolebinding squid-proxy-anyuid \
@@ -423,7 +446,7 @@ proxy-down: ##! Remove Squid forward proxy from KIND/OpenShift cluster
 	kubectl delete -n $(NAMESPACE) -f $(SQUID_MANIFEST) --ignore-not-found
 	@if kubectl api-resources 2>/dev/null | grep -q securitycontextconstraints; then \
 	  if command -v oc >/dev/null 2>&1; then \
-	    eval $(crc oc-env) \
+	    eval "$$(crc oc-env)"; \
 	    oc adm policy remove-scc-from-user anyuid -z squid-proxy -n $(NAMESPACE) 2>/dev/null || true; \
 	  else \
 	    kubectl delete rolebinding squid-proxy-anyuid -n $(NAMESPACE) --ignore-not-found; \
